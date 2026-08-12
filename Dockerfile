@@ -12,6 +12,9 @@ RUN npm ci --only=production
 # Copy application files
 COPY . .
 
+# Apply epoxy transport patch
+RUN node patch-epoxy.js
+
 # Expose port 7860
 ENV PORT=7860
 EXPOSE 7860

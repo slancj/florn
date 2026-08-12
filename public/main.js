@@ -24,7 +24,7 @@ const btnFullscreen = document.getElementById('btnFullscreen');
 async function initProxy() {
   try {
     statusText.textContent = 'Connecting...';
-    
+
     // Register Service Worker for Scramjet proxy routing
     if ('serviceWorker' in navigator) {
       statusText.textContent = 'Registering SW...';
@@ -47,7 +47,7 @@ async function initProxy() {
     const connection = new BareMuxConnection("/baremux/worker.js");
     const wispProtocol = location.protocol === "https:" ? "wss://" : "ws://";
     const wispUrl = `${wispProtocol}${location.host}/wisp/`;
-    
+
     await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
 
     statusText.textContent = 'Loading engine...';
@@ -65,7 +65,32 @@ async function initProxy() {
       },
     });
 
-    await scramjet.init();
+    try {
+      await scramjet.init();
+    } catch (idbErr) {
+      console.warn('Scramjet IDB init failed, resetting IndexedDB database and retrying...', idbErr);
+      if ('indexedDB' in window) {
+        await new Promise((resolve) => {
+          const req = indexedDB.deleteDatabase('$scramjet');
+          req.onsuccess = resolve;
+          req.onerror = resolve;
+          req.onblocked = resolve;
+        });
+      }
+      scramjet = new ScramjetController({
+        prefix: "/scramjet/",
+        files: {
+          wasm: "/scramjet/scramjet.wasm.wasm",
+          all: "/scramjet/scramjet.all.js",
+          sync: "/scramjet/scramjet.sync.js",
+        },
+        flags: {
+          serviceworkers: true,
+        },
+      });
+      await scramjet.init();
+    }
+
     scramjetFrame = scramjet.createFrame(proxyIframe);
 
     statusBadge.classList.add('ready');
@@ -85,7 +110,7 @@ function formatUrl(query) {
   if (/^https?:\/\//i.test(query)) {
     return query;
   }
-  
+
   if (query.includes('.') && !query.includes(' ')) {
     return 'https://' + query;
   }
@@ -103,7 +128,7 @@ function launchUrl(url) {
 
   const finalUrl = formatUrl(url);
   browserAddressInput.value = finalUrl;
-  
+
   searchSection.classList.add('hidden');
   browserContainer.classList.remove('hidden');
   iframeLoader.classList.remove('hidden');
