@@ -9,6 +9,11 @@ const PORT = process.env.PORT || 7860;
 const HOST = '0.0.0.0';
 
 // Serve Scramjet, BareMux, Epoxy static assets with headers for service worker support
+app.use((req, res, next) => {
+  res.setHeader('Service-Worker-Allowed', '/');
+  next();
+});
+
 app.use('/scramjet/', (req, res, next) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');

@@ -25,6 +25,15 @@ async function initProxy() {
   try {
     statusText.textContent = 'Connecting...';
     
+    // Register Service Worker for Scramjet proxy routing
+    if ('serviceWorker' in navigator) {
+      statusText.textContent = 'Registering SW...';
+      await navigator.serviceWorker.register('/sw.js', {
+        scope: '/scramjet/'
+      });
+      await navigator.serviceWorker.ready;
+    }
+
     // Connect BareMux to Wisp backend via Epoxy
     const connection = new BareMuxConnection("/baremux/worker.js");
     const wispProtocol = location.protocol === "https:" ? "wss://" : "ws://";
@@ -42,7 +51,7 @@ async function initProxy() {
         sync: "/scramjet/scramjet.sync.js",
       },
       flags: {
-        serviceworkers: false,
+        serviceworkers: true,
       },
     });
 
