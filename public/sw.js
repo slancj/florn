@@ -14,9 +14,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   event.respondWith(
     (async () => {
-      await scramjet.loadConfig();
-      if (scramjet.route(event)) {
-        return await scramjet.fetch(event);
+      try {
+        await scramjet.loadConfig();
+        if (scramjet.config && scramjet.route(event)) {
+          return await scramjet.fetch(event);
+        }
+      } catch (err) {
+        console.error('Scramjet SW Error:', err);
       }
       return await fetch(event.request);
     })()

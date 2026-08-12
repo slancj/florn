@@ -28,12 +28,21 @@ async function initProxy() {
     // Register Service Worker for Scramjet proxy routing
     if ('serviceWorker' in navigator) {
       statusText.textContent = 'Registering SW...';
-      await navigator.serviceWorker.register('/sw.js', {
+      const reg = await navigator.serviceWorker.register('/sw.js', {
         scope: '/scramjet/'
       });
-      await navigator.serviceWorker.ready;
+      if (reg.installing) {
+        await new Promise((resolve) => {
+          const sw = reg.installing;
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'activated') resolve();
+          });
+          setTimeout(resolve, 1000);
+        });
+      }
     }
 
+    statusText.textContent = 'Setting transport...';
     // Connect BareMux to Wisp backend via Epoxy
     const connection = new BareMuxConnection("/baremux/worker.js");
     const wispProtocol = location.protocol === "https:" ? "wss://" : "ws://";
@@ -41,6 +50,7 @@ async function initProxy() {
     
     await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
 
+    statusText.textContent = 'Loading engine...';
     // Initialize Scramjet Controller
     const { ScramjetController } = $scramjetLoadController();
     scramjet = new ScramjetController({
