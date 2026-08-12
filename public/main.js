@@ -10,9 +10,15 @@ const searchSection = document.getElementById('searchSection');
 const browserContainer = document.getElementById('browserContainer');
 const searchForm = document.getElementById('searchForm');
 const urlInput = document.getElementById('urlInput');
+const launchBtn = document.getElementById('launchBtn');
 const browserAddressInput = document.getElementById('browserAddressInput');
 const proxyIframe = document.getElementById('proxyIframe');
 const iframeLoader = document.getElementById('iframeLoader');
+
+// Disable user navigation until proxy engine is initialized
+urlInput.disabled = true;
+launchBtn.disabled = true;
+urlInput.placeholder = 'Waiting for proxy to initialize...';
 
 // Toolbar buttons
 const btnHome = document.getElementById('btnHome');
@@ -68,7 +74,7 @@ async function initProxy() {
       await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       await navigator.serviceWorker.ready;
 
-      // If SW is registered but not controlling this windoLoading engine...w yet, wait for claim or reload
+      // If SW is registered but not controlling this window yet, wait for claim or reload
       if (!navigator.serviceWorker.controller) {
         statusText.textContent = 'Activating worker...';
         await new Promise((resolve) => {
@@ -122,6 +128,11 @@ async function initProxy() {
     // 5. Create proxy browser frame
     scramjetFrame = scramjet.createFrame(proxyIframe);
 
+    // Enable inputs when proxy engine is ready
+    urlInput.disabled = false;
+    launchBtn.disabled = false;
+    urlInput.placeholder = 'Search with DuckDuckGo or enter a URL (e.g. example.com)...';
+
     statusBadge.classList.add('ready');
     statusText.textContent = 'Proxy Ready';
   } catch (err) {
@@ -144,16 +155,17 @@ function formatUrl(query) {
 // Launch URL in Proxy Frame
 function launchUrl(rawUrl) {
   const targetUrl = formatUrl(rawUrl);
+
+  if (!scramjetFrame) {
+    alert('Proxy is still initializing — please wait a moment and try again.');
+    return;
+  }
+
   searchSection.classList.add('hidden');
   browserContainer.classList.remove('hidden');
   browserAddressInput.value = targetUrl;
   showLoader();
-
-  if (scramjetFrame) {
-    scramjetFrame.go(targetUrl);
-  } else {
-    proxyIframe.src = '/scramjet/' + encodeURIComponent(targetUrl);
-  }
+  scramjetFrame.go(targetUrl);
 }
 
 // Reset UI back to Search Launcher
