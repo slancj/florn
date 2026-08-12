@@ -68,7 +68,7 @@ async function initProxy() {
       await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       await navigator.serviceWorker.ready;
 
-      // If SW is registered but not controlling this window yet, wait for claim or reload
+      // If SW is registered but not controlling this windoLoading engine...w yet, wait for claim or reload
       if (!navigator.serviceWorker.controller) {
         statusText.textContent = 'Activating worker...';
         await new Promise((resolve) => {
