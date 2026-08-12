@@ -35,6 +35,29 @@ function hideLoader() {
   iframeLoader.classList.add('hidden');
 }
 
+// Ensure clean IndexedDB database schema for Scramjet
+async function ensureValidScramjetIDB() {
+  if (!('indexedDB' in window)) return;
+  return new Promise((resolve) => {
+    const checkReq = indexedDB.open('$scramjet');
+    checkReq.onsuccess = () => {
+      const db = checkReq.result;
+      if (db && !db.objectStoreNames.contains('config')) {
+        db.close();
+        console.warn('Scramjet IndexedDB missing config store, resetting database...');
+        const delReq = indexedDB.deleteDatabase('$scramjet');
+        delReq.onsuccess = resolve;
+        delReq.onerror = resolve;
+        delReq.onblocked = resolve;
+      } else {
+        db.close();
+        resolve();
+      }
+    };
+    checkReq.onerror = () => resolve();
+  });
+}
+
 // Initialize Proxy Engine
 async function initProxy() {
   try {
@@ -66,7 +89,10 @@ async function initProxy() {
 
     statusText.textContent = 'Loading engine...';
 
-    // 3. Initialize Scramjet Controller
+    // 3. Ensure valid IndexedDB schema
+    await ensureValidScramjetIDB();
+
+    // 4. Initialize Scramjet Controller
     const { ScramjetController } = $scramjetLoadController();
     scramjet = new ScramjetController({
       prefix: "/scramjet/",
@@ -83,19 +109,17 @@ async function initProxy() {
     try {
       await scramjet.init();
     } catch (idbErr) {
-      console.warn('Scramjet IDB init failed, resetting IndexedDB database and retrying...', idbErr);
-      if ('indexedDB' in window) {
-        await new Promise((resolve) => {
-          const req = indexedDB.deleteDatabase('$scramjet');
-          req.onsuccess = resolve;
-          req.onerror = resolve;
-          req.onblocked = resolve;
-        });
-      }
+      console.warn('Scramjet IDB init failed, deleting $scramjet DB and retrying...', idbErr);
+      await new Promise((resolve) => {
+        const req = indexedDB.deleteDatabase('$scramjet');
+        req.onsuccess = resolve;
+        req.onerror = resolve;
+        req.onblocked = resolve;
+      });
       await scramjet.init();
     }
 
-    // 4. Create proxy browser frame
+    // 5. Create proxy browser frame
     scramjetFrame = scramjet.createFrame(proxyIframe);
 
     statusBadge.classList.add('ready');
@@ -110,143 +134,102 @@ async function initProxy() {
 function formatUrl(query) {
   query = query.trim();
   if (!query) return 'https://duckduckgo.com';
-
-  if (/^https?:\/\//i.test(query)) {
-    return query;
-  }
-
-  if (query.includes('.') && !query.includes(' ')) {
+  if (/^https?:\/\//i.test(query)) return query;
+  if (/^([a-z0-9-]+\.)+[a-z]{2,}(:\d+)?(\/.*)?$/i.test(query)) {
     return 'https://' + query;
   }
-
-  return `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
+  return 'https://duckduckgo.com/?q=' + encodeURIComponent(query);
 }
 
-// Navigate proxy to URL
-function launchUrl(url) {
-  if (!scramjetFrame) {
-    alert('Proxy engine is still initializing. Please wait a moment...');
-    return;
-  }
-
-  const finalUrl = formatUrl(url);
-  browserAddressInput.value = finalUrl;
-
+// Launch URL in Proxy Frame
+function launchUrl(rawUrl) {
+  const targetUrl = formatUrl(rawUrl);
   searchSection.classList.add('hidden');
   browserContainer.classList.remove('hidden');
+  browserAddressInput.value = targetUrl;
   showLoader();
 
-  scramjetFrame.go(finalUrl);
+  if (scramjetFrame) {
+    scramjetFrame.go(targetUrl);
+  } else {
+    proxyIframe.src = '/scramjet/' + encodeURIComponent(targetUrl);
+  }
 }
 
-// Hide loader when iframe finishes loading and sync URL bar
-proxyIframe.addEventListener('load', () => {
-  hideLoader();
-  try {
-    const rawHref = proxyIframe.contentWindow?.location?.href;
-    if (rawHref && rawHref !== 'about:blank' && document.activeElement !== browserAddressInput) {
-      if (rawHref.includes('/scramjet/')) {
-        const encoded = rawHref.split('/scramjet/')[1];
-        if (encoded) {
-          try {
-            browserAddressInput.value = decodeURIComponent(encoded);
-          } catch (e) {
-            browserAddressInput.value = encoded;
-          }
-        }
-      }
-    }
-  } catch (e) {
-    // Cross-origin restriction on frame contentWindow access
-  }
-});
-
-// Event Listeners for Homepage Form
-searchForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  launchUrl(urlInput.value);
-});
-
-// Editable Address Bar Enter Key Navigation
-browserAddressInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    if (browserAddressInput.value.trim()) {
-      launchUrl(browserAddressInput.value);
-    }
-  }
-});
-
-browserAddressInput.addEventListener('focus', () => {
-  browserAddressInput.select();
-});
-
-// Quick launch cards
-document.querySelectorAll('.shortcut-card').forEach(card => {
-  card.addEventListener('click', () => {
-    const targetUrl = card.getAttribute('data-url');
-    urlInput.value = targetUrl;
-    launchUrl(targetUrl);
-  });
-});
-
-// Toolbar Controls
-btnHome.addEventListener('click', () => {
+// Reset UI back to Search Launcher
+function goHome() {
   browserContainer.classList.add('hidden');
   searchSection.classList.remove('hidden');
   proxyIframe.src = 'about:blank';
+  urlInput.value = '';
+  browserAddressInput.value = '';
+  hideLoader();
+}
+
+// Event Listeners setup
+searchForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const query = urlInput.value;
+  if (query) launchUrl(query);
 });
 
-btnBack.addEventListener('click', () => {
-  try {
-    if (scramjetFrame && typeof scramjetFrame.back === 'function') {
-      scramjetFrame.back();
-    } else if (proxyIframe.contentWindow) {
-      proxyIframe.contentWindow.history.back();
-    }
-  } catch (err) {
-    console.warn('Back navigation error:', err);
+// Interactive Address Bar inside Iframe View
+browserAddressInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const newUrl = browserAddressInput.value;
+    if (newUrl) launchUrl(newUrl);
   }
+});
+
+// Hide loader when iframe finishes loading
+proxyIframe.addEventListener('load', () => {
+  hideLoader();
+  try {
+    if (scramjetFrame && scramjetFrame.url) {
+      browserAddressInput.value = scramjetFrame.url.href;
+    }
+  } catch (e) { }
+});
+
+// Quick launch buttons
+document.querySelectorAll('.shortcut-card').forEach((card) => {
+  card.addEventListener('click', () => {
+    const target = card.getAttribute('data-url');
+    if (target) launchUrl(target);
+  });
+});
+
+// Toolbar Actions
+btnHome.addEventListener('click', goHome);
+
+btnBack.addEventListener('click', () => {
+  if (scramjetFrame) scramjetFrame.back();
+  else proxyIframe.contentWindow?.history.back();
+  showLoader();
 });
 
 btnForward.addEventListener('click', () => {
-  try {
-    if (scramjetFrame && typeof scramjetFrame.forward === 'function') {
-      scramjetFrame.forward();
-    } else if (proxyIframe.contentWindow) {
-      proxyIframe.contentWindow.history.forward();
-    }
-  } catch (err) {
-    console.warn('Forward navigation error:', err);
-  }
+  if (scramjetFrame) scramjetFrame.forward();
+  else proxyIframe.contentWindow?.history.forward();
+  showLoader();
 });
 
 btnReload.addEventListener('click', () => {
+  if (scramjetFrame) scramjetFrame.reload();
+  else proxyIframe.contentWindow?.location.reload();
   showLoader();
-  try {
-    if (scramjetFrame && typeof scramjetFrame.reload === 'function') {
-      scramjetFrame.reload();
-    } else if (proxyIframe.contentWindow) {
-      proxyIframe.contentWindow.location.reload();
-    } else if (browserAddressInput.value) {
-      launchUrl(browserAddressInput.value);
-    }
-  } catch (err) {
-    console.warn('Reload fallback triggered:', err);
-    if (browserAddressInput.value) {
-      launchUrl(browserAddressInput.value);
-    }
-  }
 });
 
 btnFullscreen.addEventListener('click', () => {
   if (!document.fullscreenElement) {
-    browserContainer.requestFullscreen().catch(err => {
-      console.error('Fullscreen error:', err);
+    browserContainer.requestFullscreen().catch((err) => {
+      console.warn(`Error attempting to enable fullscreen: ${err.message}`);
     });
   } else {
     document.exitFullscreen();
   }
 });
 
-window.addEventListener('DOMContentLoaded', initProxy);
+// Start proxy initialization on page load
+initProxy();
