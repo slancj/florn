@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "@mercuryworkshop/bare-mux": "^2.1.9",
-    "@mercuryworkshop/epoxy-transport": "^3.0.1",
-    "@mercuryworkshop/scramjet": "latest",
+    "@mercuryworkshop/epoxy-transport": "^2.0.1",
+    "@mercuryworkshop/scramjet": "^2.0.0-alpha",
     "@mercuryworkshop/wisp-js": "^0.4.1",
     "express": "^5.2.1"
   }

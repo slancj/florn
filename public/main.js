@@ -2,6 +2,7 @@ import { BareMuxConnection } from "/baremux/index.mjs";
 
 let scramjet = null;
 let scramjetFrame = null;
+let loaderTimeout = null;
 
 const statusBadge = document.getElementById('statusBadge');
 const statusText = document.getElementById('statusText');
@@ -20,30 +21,43 @@ const btnForward = document.getElementById('btnForward');
 const btnReload = document.getElementById('btnReload');
 const btnFullscreen = document.getElementById('btnFullscreen');
 
+// Loader control helpers
+function showLoader() {
+  iframeLoader.classList.remove('hidden');
+  if (loaderTimeout) clearTimeout(loaderTimeout);
+  loaderTimeout = setTimeout(() => {
+    iframeLoader.classList.add('hidden');
+  }, 10000); // Auto-hide after 10s max
+}
+
+function hideLoader() {
+  if (loaderTimeout) clearTimeout(loaderTimeout);
+  iframeLoader.classList.add('hidden');
+}
+
 // Initialize Proxy Engine
 async function initProxy() {
   try {
-    statusText.textContent = 'Connecting...';
+    statusText.textContent = 'Registering SW...';
 
-    // Register Service Worker for Scramjet proxy routing
+    // 1. Register Service Worker & ensure page is controlled
     if ('serviceWorker' in navigator) {
-      statusText.textContent = 'Registering SW...';
-      const reg = await navigator.serviceWorker.register('/sw.js', {
-        scope: '/scramjet/'
-      });
-      if (reg.installing) {
+      await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      await navigator.serviceWorker.ready;
+
+      // If SW is registered but not controlling this window yet, wait for claim or reload
+      if (!navigator.serviceWorker.controller) {
+        statusText.textContent = 'Activating worker...';
         await new Promise((resolve) => {
-          const sw = reg.installing;
-          sw.addEventListener('statechange', () => {
-            if (sw.state === 'activated') resolve();
-          });
-          setTimeout(resolve, 1000);
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+          setTimeout(() => location.reload(), 500);
         });
       }
     }
 
     statusText.textContent = 'Setting transport...';
-    // Connect BareMux to Wisp backend via Epoxy
+
+    // 2. Connect BareMux to Wisp backend via Epoxy
     const connection = new BareMuxConnection("/baremux/worker.js");
     const wispProtocol = location.protocol === "https:" ? "wss://" : "ws://";
     const wispUrl = `${wispProtocol}${location.host}/wisp/`;
@@ -51,7 +65,8 @@ async function initProxy() {
     await connection.setTransport("/epoxy/index.mjs", [{ wisp: wispUrl }]);
 
     statusText.textContent = 'Loading engine...';
-    // Initialize Scramjet Controller
+
+    // 3. Initialize Scramjet Controller
     const { ScramjetController } = $scramjetLoadController();
     scramjet = new ScramjetController({
       prefix: "/scramjet/",
@@ -77,20 +92,10 @@ async function initProxy() {
           req.onblocked = resolve;
         });
       }
-      scramjet = new ScramjetController({
-        prefix: "/scramjet/",
-        files: {
-          wasm: "/scramjet/scramjet.wasm.wasm",
-          all: "/scramjet/scramjet.all.js",
-          sync: "/scramjet/scramjet.sync.js",
-        },
-        flags: {
-          serviceworkers: true,
-        },
-      });
       await scramjet.init();
     }
 
+    // 4. Create proxy browser frame
     scramjetFrame = scramjet.createFrame(proxyIframe);
 
     statusBadge.classList.add('ready');
@@ -106,7 +111,6 @@ function formatUrl(query) {
   query = query.trim();
   if (!query) return 'https://duckduckgo.com';
 
-  // Check if it's a URL
   if (/^https?:\/\//i.test(query)) {
     return query;
   }
@@ -115,7 +119,6 @@ function formatUrl(query) {
     return 'https://' + query;
   }
 
-  // Otherwise, treat as search query
   return `https://duckduckgo.com/?q=${encodeURIComponent(query)}`;
 }
 
@@ -131,20 +134,51 @@ function launchUrl(url) {
 
   searchSection.classList.add('hidden');
   browserContainer.classList.remove('hidden');
-  iframeLoader.classList.remove('hidden');
+  showLoader();
 
   scramjetFrame.go(finalUrl);
 }
 
-// Hide loader when iframe finishes loading
+// Hide loader when iframe finishes loading and sync URL bar
 proxyIframe.addEventListener('load', () => {
-  iframeLoader.classList.add('hidden');
+  hideLoader();
+  try {
+    const rawHref = proxyIframe.contentWindow?.location?.href;
+    if (rawHref && rawHref !== 'about:blank' && document.activeElement !== browserAddressInput) {
+      if (rawHref.includes('/scramjet/')) {
+        const encoded = rawHref.split('/scramjet/')[1];
+        if (encoded) {
+          try {
+            browserAddressInput.value = decodeURIComponent(encoded);
+          } catch (e) {
+            browserAddressInput.value = encoded;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // Cross-origin restriction on frame contentWindow access
+  }
 });
 
-// Event Listeners
+// Event Listeners for Homepage Form
 searchForm.addEventListener('submit', (e) => {
   e.preventDefault();
   launchUrl(urlInput.value);
+});
+
+// Editable Address Bar Enter Key Navigation
+browserAddressInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    if (browserAddressInput.value.trim()) {
+      launchUrl(browserAddressInput.value);
+    }
+  }
+});
+
+browserAddressInput.addEventListener('focus', () => {
+  browserAddressInput.select();
 });
 
 // Quick launch cards
@@ -164,17 +198,44 @@ btnHome.addEventListener('click', () => {
 });
 
 btnBack.addEventListener('click', () => {
-  if (scramjetFrame) scramjetFrame.back();
+  try {
+    if (scramjetFrame && typeof scramjetFrame.back === 'function') {
+      scramjetFrame.back();
+    } else if (proxyIframe.contentWindow) {
+      proxyIframe.contentWindow.history.back();
+    }
+  } catch (err) {
+    console.warn('Back navigation error:', err);
+  }
 });
 
 btnForward.addEventListener('click', () => {
-  if (scramjetFrame) scramjetFrame.forward();
+  try {
+    if (scramjetFrame && typeof scramjetFrame.forward === 'function') {
+      scramjetFrame.forward();
+    } else if (proxyIframe.contentWindow) {
+      proxyIframe.contentWindow.history.forward();
+    }
+  } catch (err) {
+    console.warn('Forward navigation error:', err);
+  }
 });
 
 btnReload.addEventListener('click', () => {
-  if (scramjetFrame) {
-    iframeLoader.classList.remove('hidden');
-    scramjetFrame.reload();
+  showLoader();
+  try {
+    if (scramjetFrame && typeof scramjetFrame.reload === 'function') {
+      scramjetFrame.reload();
+    } else if (proxyIframe.contentWindow) {
+      proxyIframe.contentWindow.location.reload();
+    } else if (browserAddressInput.value) {
+      launchUrl(browserAddressInput.value);
+    }
+  } catch (err) {
+    console.warn('Reload fallback triggered:', err);
+    if (browserAddressInput.value) {
+      launchUrl(browserAddressInput.value);
+    }
   }
 });
 
@@ -188,5 +249,4 @@ btnFullscreen.addEventListener('click', () => {
   }
 });
 
-// Start initialization on DOM load
 window.addEventListener('DOMContentLoaded', initProxy);

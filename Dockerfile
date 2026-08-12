@@ -3,16 +3,16 @@ FROM node:20-alpine
 # Set working directory
 WORKDIR /app
 
-# Copy package manifests
-COPY package*.json ./
+# Copy package manifests and patch script
+COPY package*.json patch-epoxy.js ./
 
-# Install dependencies
+# Install dependencies (runs postinstall patch-epoxy.js)
 RUN npm ci --only=production
 
-# Copy application files
+# Copy remaining application files
 COPY . .
 
-# Apply epoxy transport patch
+# Ensure patch is applied
 RUN node patch-epoxy.js
 
 # Expose port 7860
